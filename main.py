@@ -17,7 +17,8 @@ import threading
 import logging
 from typing import List, Dict, Any, Optional, Literal, Union
 from collections import OrderedDict
-
+# Use XML parser instead of regex
+import xml.etree.ElementTree as ET
 from fastapi import FastAPI, Request, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ValidationError
@@ -397,18 +398,13 @@ def generate_function_prompt(tools: List[Tool], trigger_signal: str) -> tuple[st
         props: Dict[str, Any] = schema.get("properties", {}) or {}
         required_list: List[str] = schema.get("required", []) or []
 
-        # Brief summary line: name (type)
-        params_summary = ", ".join([
-            f"{p_name} ({(p_info or {}).get('type', 'any')})" for p_name, p_info in props.items()
-        ]) or "None"
-
-        # Build detailed parameter spec for prompt injection (default enabled)
-        detail_lines: List[str] = []
+        # Build detailed parameter spec in XML format
+        params_xml = []
         for p_name, p_info in props.items():
             p_info = p_info or {}
             p_type = p_info.get("type", "any")
-            is_required = "Yes" if p_name in required_list else "No"
-            p_desc = p_info.get("description")
+            is_required = p_name in required_list
+            p_desc = p_info.get("description", "")
             enum_vals = p_info.get("enum")
             default_val = p_info.get("default")
             examples_val = p_info.get("examples") or p_info.get("example")
@@ -431,47 +427,69 @@ def generate_function_prompt(tools: List[Tool], trigger_signal: str) -> tuple[st
                     if itype:
                         constraints["items.type"] = itype
 
-            # Compose pretty lines
-            detail_lines.append(f"- {p_name}:")
-            detail_lines.append(f"  - type: {p_type}")
-            detail_lines.append(f"  - required: {is_required}")
+            # Build XML parameter block
+            param_xml = f"<parameter name=\"{p_name}\">\n"
+            param_xml += f"  <type>{p_type}</type>\n"
+            param_xml += f"  <required>{str(is_required).lower()}</required>\n"
             if p_desc:
-                detail_lines.append(f"  - description: {p_desc}")
+                param_xml += f"  <description>{p_desc}</description>\n"
             if enum_vals is not None:
                 try:
-                    detail_lines.append(f"  - enum: {json.dumps(enum_vals, ensure_ascii=False)}")
+                    param_xml += f"  <enum>{json.dumps(enum_vals, ensure_ascii=False)}</enum>\n"
                 except Exception:
-                    detail_lines.append(f"  - enum: {enum_vals}")
+                    param_xml += f"  <enum>{str(enum_vals)}</enum>\n"
             if default_val is not None:
                 try:
-                    detail_lines.append(f"  - default: {json.dumps(default_val, ensure_ascii=False)}")
+                    param_xml += f"  <default>{json.dumps(default_val, ensure_ascii=False)}</default>\n"
                 except Exception:
-                    detail_lines.append(f"  - default: {default_val}")
+                    param_xml += f"  <default>{str(default_val)}</default>\n"
             if examples_val is not None:
                 try:
-                    detail_lines.append(f"  - examples: {json.dumps(examples_val, ensure_ascii=False)}")
+                    param_xml += f"  <examples>{json.dumps(examples_val, ensure_ascii=False)}</examples>\n"
                 except Exception:
-                    detail_lines.append(f"  - examples: {examples_val}")
+                    param_xml += f"  <examples>{str(examples_val)}</examples>\n"
             if constraints:
                 try:
-                    detail_lines.append(f"  - constraints: {json.dumps(constraints, ensure_ascii=False)}")
+                    param_xml += f"  <constraints>{json.dumps(constraints, ensure_ascii=False)}</constraints>\n"
                 except Exception:
-                    detail_lines.append(f"  - constraints: {constraints}")
+                    param_xml += f"  <constraints>{str(constraints)}</constraints>\n"
+            param_xml += "</parameter>"
+            
+            params_xml.append(param_xml)
 
-        detail_block = "\n".join(detail_lines) if detail_lines else "(no parameter details)"
+        # Build required parameters list
+        required_xml = ""
+        if required_list:
+            required_xml = "<required>\n" + "\n".join([f"  <param>{param}</param>" for param in required_list]) + "\n</required>"
+        else:
+            required_xml = "<required>None</required>"
 
-        desc_block = f"```\n{description}\n```" if description else "None"
-
-        tools_list_str.append(
-            f"{i + 1}. <tool name=\"{name}\">\n"
-            f"   Description:\n{desc_block}\n"
-            f"   Parameters summary: {params_summary}\n"
-            f"   Required parameters: {', '.join(required_list) if required_list else 'None'}\n"
-            f"   Parameter details:\n{detail_block}"
-        )
+        # Build complete tool XML block
+        tool_xml = f"<tool id=\"{i + 1}\">\n"
+        tool_xml += f"  <name>{name}</name>\n"
+        if description:
+            tool_xml += f"  <description>{description}</description>\n"
+        else:
+            tool_xml += "  <description>None</description>\n"
+        tool_xml += f"  {required_xml}\n"
+        if params_xml:
+            tool_xml += "  <parameters>\n"
+            for param in params_xml:
+                # Indent each parameter
+                indented_param = "\n".join([f"    {line}" for line in param.split("\n")])
+                tool_xml += f"{indented_param}\n"
+            tool_xml += "  </parameters>\n"
+        else:
+            tool_xml += "  <parameters>None</parameters>\n"
+        tool_xml += "</tool>"
+        
+        tools_list_str.append(tool_xml)
+    
+    # Wrap all tools in a tools list XML structure
+    tools_xml = "<function_list>\n" + "\n".join([f"  {line}" for tool in tools_list_str for line in tool.split("\n")]) + "\n</function_list>"
     
     prompt_template = get_function_call_prompt_template(trigger_signal)
-    prompt_content = prompt_template.replace("{tools_list}", "\n\n".join(tools_list_str))
+    prompt_content = prompt_template.replace("{tools_list}", tools_xml)
     
     return prompt_content, trigger_signal
 
@@ -653,33 +671,76 @@ def parse_function_calls_xml(xml_string: str, trigger_signal: str) -> Optional[L
     for i, block in enumerate(call_blocks):
         logger.debug(f"🔧 Processing function_call #{i+1}: {repr(block)}")
         
-        tool_match = re.search(r"<tool>(.*?)</tool>", block)
-        if not tool_match:
-            logger.debug(f"🔧 No tool tag found in block #{i+1}")
+        try:
+            
+            # Wrap the block in a root element for proper XML parsing
+            xml_content = f"<root>{block}</root>"
+            root = ET.fromstring(xml_content)
+            
+            # Find tool element
+            tool_elem = root.find("tool")
+            if tool_elem is None or tool_elem.text is None:
+                logger.debug(f"🔧 No tool tag found in block #{i+1}")
+                continue
+            
+            name = tool_elem.text.strip()
+            args = {}
+            
+            # Find args element
+            args_elem = root.find("args")
+            if args_elem is not None:
+                def _coerce_value(v: str):
+                    try:
+                        return json.loads(v)
+                    except Exception:
+                        pass
+                    return v
+                
+                # Extract all child elements as arguments
+                for arg_elem in args_elem:
+                    if arg_elem.text is not None:
+                        args[arg_elem.tag] = _coerce_value(arg_elem.text)
+                    else:
+                        args[arg_elem.tag] = ""
+            
+            result = {"name": name, "args": args}
+            results.append(result)
+            logger.debug(f"🔧 Added tool call: {result}")
+            
+        except ET.ParseError as e:
+            logger.debug(f"🔧 XML parsing failed for block #{i+1}: {e}, falling back to regex")
+            # Fallback to original regex method
+            tool_match = re.search(r"<tool>(.*?)</tool>", block)
+            if not tool_match:
+                logger.debug(f"🔧 No tool tag found in block #{i+1}")
+                continue
+            
+            name = tool_match.group(1).strip()
+            args = {}
+            
+            args_block_match = re.search(r"<args>([\s\S]*?)</args>", block)
+            if args_block_match:
+                args_content = args_block_match.group(1)
+                # Support arg tag names containing hyphens (e.g., -i, -A); match any non-space, non-'>' and non-'/' chars
+                arg_matches = re.findall(r"<([^\s>/]+)>([\s\S]*?)</\1>", args_content)
+
+                def _coerce_value(v: str):
+                    try:
+                        return json.loads(v)
+                    except Exception:
+                        pass
+                    return v
+
+                for k, v in arg_matches:
+                    args[k] = _coerce_value(v)
+            
+            result = {"name": name, "args": args}
+            results.append(result)
+            logger.debug(f"🔧 Added tool call: {result}")
+        
+        except Exception as e:
+            logger.debug(f"🔧 Unexpected error parsing block #{i+1}: {e}")
             continue
-        
-        name = tool_match.group(1).strip()
-        args = {}
-        
-        args_block_match = re.search(r"<args>([\s\S]*?)</args>", block)
-        if args_block_match:
-            args_content = args_block_match.group(1)
-            # Support arg tag names containing hyphens (e.g., -i, -A); match any non-space, non-'>' and non-'/' chars
-            arg_matches = re.findall(r"<([^\s>/]+)>([\s\S]*?)</\1>", args_content)
-
-            def _coerce_value(v: str):
-                try:
-                    return json.loads(v)
-                except Exception:
-                    pass
-                return v
-
-            for k, v in arg_matches:
-                args[k] = _coerce_value(v)
-        
-        result = {"name": name, "args": args}
-        results.append(result)
-        logger.debug(f"🔧 Added tool call: {result}")
     
     logger.debug(f"🔧 Final parsing result: {results}")
     return results if results else None
