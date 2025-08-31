@@ -675,37 +675,45 @@ def parse_function_calls_xml(xml_string: str, trigger_signal: str) -> Optional[L
             
             # Wrap the block in a root element for proper XML parsing
             xml_content = f"<root>{block}</root>"
-            root = ET.fromstring(xml_content)
-            
-            # Find tool element
-            tool_elem = root.find("tool")
-            if tool_elem is None or tool_elem.text is None:
-                logger.debug(f"🔧 No tool tag found in block #{i+1}")
-                continue
-            
-            name = tool_elem.text.strip()
-            args = {}
-            
-            # Find args element
-            args_elem = root.find("args")
-            if args_elem is not None:
-                def _coerce_value(v: str):
-                    try:
-                        return json.loads(v)
-                    except Exception:
-                        pass
-                    return v
+            try:
+                root = ET.fromstring(xml_content)
                 
-                # Extract all child elements as arguments
-                for arg_elem in args_elem:
-                    if arg_elem.text is not None:
-                        args[arg_elem.tag] = _coerce_value(arg_elem.text)
-                    else:
-                        args[arg_elem.tag] = ""
-            
-            result = {"name": name, "args": args}
-            results.append(result)
-            logger.debug(f"🔧 Added tool call: {result}")
+                # Find tool element
+                tool_elem = root.find("tool")
+                if tool_elem is None or tool_elem.text is None:
+                    logger.debug(f"🔧 No tool tag found in block #{i+1}")
+                    continue
+                
+                name = tool_elem.text.strip()
+                args = {}
+                
+                # Find args element
+                args_elem = root.find("args")
+                if args_elem is not None:
+                    def _coerce_value(v: str):
+                        try:
+                            return json.loads(v)
+                        except Exception:
+                            pass
+                        return v
+                    
+                    # Extract all child elements as arguments
+                    for arg_elem in args_elem:
+                        # Get the full text content including nested elements
+                        arg_text = ET.tostring(arg_elem, encoding='unicode', method='text')
+                        if arg_text:
+                            args[arg_elem.tag] = _coerce_value(arg_text)
+                        else:
+                            args[arg_elem.tag] = ""
+                
+                result = {"name": name, "args": args}
+                results.append(result)
+                logger.debug(f"🔧 Added tool call: {result}")
+                
+            except ET.ParseError:
+                # If XML parsing fails due to nested XML content, fall back to regex
+                logger.debug(f"🔧 XML contains nested XML content in block #{i+1}, using regex fallback")
+                raise ET.ParseError("Fallback to regex")
             
         except ET.ParseError as e:
             logger.debug(f"🔧 XML parsing failed for block #{i+1}: {e}, falling back to regex")
