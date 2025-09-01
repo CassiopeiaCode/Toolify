@@ -58,8 +58,12 @@ features:
     {tools_list}
 
     **2. Tool Call Procedure:**
-    To call one or more tools, you MUST first output the trigger signal `{trigger_signal}` on a new, empty line.
-    Immediately after the trigger signal, provide your tool calls enclosed in `<function_calls>` XML tags.
+    When you decide to call a tool, you MUST output EXACTLY this trigger signal: `{trigger_signal}`
+    The trigger signal MUST be output on a completely empty line by itself before any tool calls.
+    Do NOT add any other text, spaces, or characters before or after the trigger_signal on that line.
+    You may provide explanations or reasoning before outputting the trigger signal, but once you decide to make a tool call, the trigger signal must come first.
+    
+    After outputting the trigger signal, immediately provide your tool calls enclosed in `<function_calls>` XML tags.
 
     **3. XML Format for Tool Calls:**
     Your tool calls must be structured EXACTLY as follows. This is the ONLY format you can use, and any deviation will result in failure.
@@ -67,20 +71,24 @@ features:
     {trigger_signal}
     <function_calls>
       <function_call>
-        <tool>name_of_the_tool</tool>
-        <args>
-          <argument_name>value</argument_name>
-          <another_argument>another_value</another_argument>
-        </args>
+      <tool>name_of_the_tool</tool>
+      <args>
+      <argument_name>value</argument_name>
+      <another_argument>another_value</another_argument>
+      </args>
       </function_call>
     </function_calls>
     ```
     **IMPORTANT RULES:**
-    - The `{trigger_signal}` MUST be on its own line and appear only once.
+    - You can provide explanations or reasoning before deciding to call tools
+    - When you decide to make a tool call, ALWAYS output the trigger signal `{trigger_signal}` on its own line first
+    - The trigger signal is your signal to the system that you are about to make a tool call
     - The `<tool>` tag must contain the exact name of a tool from the list. Any other tool name is invalid.
     - The `<args>` must contain all required arguments for that tool.
     - Do not add any text or explanation after the closing `</function_calls>` tag.
     - When a tool call is necessary, you MUST output the entire and complete structure as defined above. Do not omit any part of it.
+
+
 
 # Configuration explanation:
 # 1. upstream_services: Configure multiple OpenAI compatible API services
