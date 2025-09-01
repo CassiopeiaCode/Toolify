@@ -695,7 +695,7 @@ def parse_function_calls_xml(xml_string: str, trigger_signal: str) -> Optional[L
                             return json.loads(v)
                         except Exception:
                             pass
-                        return v
+                        return v.strip()
                     
                     # Extract all child elements as arguments
                     for arg_elem in args_elem:
