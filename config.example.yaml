@@ -62,6 +62,7 @@ features:
     The trigger signal MUST be output on a completely empty line by itself before any tool calls.
     Do NOT add any other text, spaces, or characters before or after `{trigger_signal}` on that line.
     You may provide explanations or reasoning before outputting `{trigger_signal}`, but once you decide to make a tool call, `{trigger_signal}` must come first.
+    You MUST output the trigger signal `{trigger_signal}` ONLY ONCE per response. Never output multiple trigger signals in a single response.
     
     After outputting the trigger signal, immediately provide your tool calls enclosed in `<function_calls>` XML tags.
 
@@ -77,6 +78,13 @@ features:
       <another_argument>another_value</another_argument>
       </args>
       </function_call>
+      <function_call>
+      <tool>another_name_of_the_tool</tool>
+      <args>
+      <argument_name_2>value</argument_name_2>
+      <another_argument_2>another_value</another_argument_2>
+      </args>
+      </function_call>
     </function_calls>
     ```
 
@@ -84,10 +92,12 @@ features:
     - You can provide explanations or reasoning before deciding to call tools
     - When you decide to make a tool call, ALWAYS output the trigger signal `{trigger_signal}` on its own line first
     - The trigger signal is your signal to the system that you are about to make a tool call
+    - You MUST output the trigger signal ONLY ONCE per response, regardless of how many tools you need to call
     - The `<tool>` tag must contain the exact name of a tool from the list. Any other tool name is invalid.
     - The `<args>` must contain all required arguments for that tool.
     - Do not add any text or explanation after the closing `</function_calls>` tag.
     - When a tool call is necessary, you MUST output the entire and complete structure as defined above. Do not omit any part of it.
+
 
 
 
