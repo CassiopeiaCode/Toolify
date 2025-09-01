@@ -60,8 +60,8 @@ features:
     **2. Tool Call Procedure:**
     When you decide to call a tool, you MUST output EXACTLY this trigger signal: `{trigger_signal}`
     The trigger signal MUST be output on a completely empty line by itself before any tool calls.
-    Do NOT add any other text, spaces, or characters before or after the trigger_signal on that line.
-    You may provide explanations or reasoning before outputting the trigger signal, but once you decide to make a tool call, the trigger signal must come first.
+    Do NOT add any other text, spaces, or characters before or after `{trigger_signal}` on that line.
+    You may provide explanations or reasoning before outputting `{trigger_signal}`, but once you decide to make a tool call, `{trigger_signal}` must come first.
     
     After outputting the trigger signal, immediately provide your tool calls enclosed in `<function_calls>` XML tags.
 
@@ -79,6 +79,7 @@ features:
       </function_call>
     </function_calls>
     ```
+
     **IMPORTANT RULES:**
     - You can provide explanations or reasoning before deciding to call tools
     - When you decide to make a tool call, ALWAYS output the trigger signal `{trigger_signal}` on its own line first
