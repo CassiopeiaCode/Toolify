@@ -621,44 +621,34 @@ class StreamingFunctionCallDetector:
 
 def parse_function_calls_xml(xml_string: str, trigger_signal: str) -> Optional[List[Dict[str, Any]]]:
     """
-    Enhanced XML parsing function, supports dynamic trigger signals
-    1. Retain <think>...</think> blocks (they should be returned normally to the user)
-    2. Temporarily remove think blocks only when parsing function_calls to prevent think content from interfering with XML parsing
-    3. Find the last occurrence of the trigger signal
-    4. Start parsing function_calls from the last trigger signal
-    """
-    logger.debug(f"🔧 Improved parser starting processing, input length: {len(xml_string) if xml_string else 0}")
-    logger.debug(f"🔧 Using trigger signal: {trigger_signal[:20]}...")
+    Parses function calls from a string that is expected to start with a trigger signal.
     
-    if not xml_string or trigger_signal not in xml_string:
-        logger.debug(f"🔧 Input is empty or doesn't contain trigger signal")
+    This parser is designed to be strict and only process the first <function_calls>
+    block it encounters after the signal.
+    
+    Args:
+        xml_string: The content string, expected to start with the trigger_signal.
+        trigger_signal: The signal that marks the beginning of the tool call section.
+
+    Returns:
+        A list of parsed tool calls, or None if parsing fails.
+    """
+    logger.debug(f"🔧 Parser starting processing, input length: {len(xml_string) if xml_string else 0}")
+    
+    # The calling function is responsible for finding the signal and passing the content from that point onwards.
+    # We just verify that the string starts correctly.
+    if not xml_string or not xml_string.strip().startswith(trigger_signal):
+        logger.debug(f"🔧 Input is empty or doesn't start with the trigger signal: {trigger_signal[:20]}...")
         return None
     
+    # Temporarily remove <think> blocks for robust XML parsing
     cleaned_content = remove_think_blocks(xml_string)
     logger.debug(f"🔧 Content length after temporarily removing think blocks: {len(cleaned_content)}")
-    
-    signal_positions = []
-    start_pos = 0
-    while True:
-        pos = cleaned_content.find(trigger_signal, start_pos)
-        if pos == -1:
-            break
-        signal_positions.append(pos)
-        start_pos = pos + 1
-    
-    if not signal_positions:
-        logger.debug(f"🔧 No trigger signal found in cleaned content")
-        return None
-    
-    logger.debug(f"🔧 Found {len(signal_positions)} trigger signal positions: {signal_positions}")
-    
-    last_signal_pos = signal_positions[-1]
-    content_after_signal = cleaned_content[last_signal_pos:]
-    logger.debug(f"🔧 Content starting from last trigger signal: {repr(content_after_signal[:100])}")
-    
-    calls_content_match = re.search(r"<function_calls>([\s\S]*?)</function_calls>", content_after_signal)
+
+    # Find the first function calls block immediately following the signal
+    calls_content_match = re.search(r"<function_calls>([\s\S]*?)</function_calls>", cleaned_content)
     if not calls_content_match:
-        logger.debug(f"🔧 No function_calls tag found")
+        logger.debug(f"🔧 No <function_calls> tag found after the trigger signal.")
         return None
     
     calls_content = calls_content_match.group(1)
@@ -695,7 +685,7 @@ def parse_function_calls_xml(xml_string: str, trigger_signal: str) -> Optional[L
                             return json.loads(v)
                         except Exception:
                             pass
-                        return v.strip()
+                        return str(v).strip()
                     
                     # Extract all child elements as arguments
                     for arg_elem in args_elem:
@@ -956,9 +946,7 @@ async def chat_completions(
     except Exception as e:
         logger.error(f"❌ Request preprocessing failed: {str(e)}")
         logger.error(f"❌ Error type: {type(e).__name__}")
-        if hasattr(app_config, 'debug') and app_config.debug:
-            logger.error(f"❌ Error stack: {traceback.format_exc()}")
-        
+        logger.error(f"❌ Error stack: {traceback.format_exc()}")
         return JSONResponse(
             status_code=422,
             content={
@@ -970,7 +958,7 @@ async def chat_completions(
             }
         )
 
-    if has_function_call:
+    if has_function_call and body.tools:
         logger.debug(f"🔧 Using global trigger signal for this request: {GLOBAL_TRIGGER_SIGNAL}")
         
         function_prompt, _ = generate_function_prompt(body.tools, GLOBAL_TRIGGER_SIGNAL)
@@ -1020,42 +1008,50 @@ async def chat_completions(
             if has_function_call:
                 content = response_json["choices"][0]["message"]["content"]
                 logger.debug(f"🔧 Complete response content: {repr(content)}")
+
+                signal_pos = content.find(GLOBAL_TRIGGER_SIGNAL)
                 
-                parsed_tools = parse_function_calls_xml(content, GLOBAL_TRIGGER_SIGNAL)
-                logger.debug(f"🔧 XML parsing result: {parsed_tools}")
-                
-                if parsed_tools:
-                    logger.debug(f"🔧 Successfully parsed {len(parsed_tools)} tool calls")
-                    tool_calls = []
-                    for tool in parsed_tools:
-                        tool_call_id = f"call_{uuid.uuid4().hex}"
-                        store_tool_call_mapping(
-                            tool_call_id,
-                            tool["name"],
-                            tool["args"],
-                            f"Calling tool {tool['name']}"
-                        )
-                        tool_calls.append({
-                            "id": tool_call_id,
-                            "type": "function",
-                            "function": {
-                                "name": tool["name"],
-                                "arguments": json.dumps(tool["args"])
-                            }
-                        })
-                    logger.debug(f"🔧 Converted tool_calls: {tool_calls}")
+                if signal_pos != -1:
+                    logger.debug(f"🔧 Trigger signal found at position {signal_pos}. Attempting to parse tool calls.")
+                    content_before_signal = content[:signal_pos].strip()
+                    content_from_signal = content[signal_pos:]
+
+                    parsed_tools = parse_function_calls_xml(content_from_signal, GLOBAL_TRIGGER_SIGNAL)
                     
-                    response_json["choices"][0]["message"] = {
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": tool_calls,
-                    }
-                    response_json["choices"][0]["finish_reason"] = "tool_calls"
-                    logger.debug(f"🔧 Function call conversion completed")
+                    if parsed_tools:
+                        logger.debug(f"🔧 Successfully parsed {len(parsed_tools)} tool calls from non-streaming response.")
+                        tool_calls = []
+                        for tool in parsed_tools:
+                            tool_call_id = f"call_{uuid.uuid4().hex}"
+                            store_tool_call_mapping(
+                                tool_call_id,
+                                tool["name"],
+                                tool["args"],
+                                f"Calling tool {tool['name']}"
+                            )
+                            tool_calls.append({
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool["name"],
+                                    "arguments": json.dumps(tool["args"])
+                                }
+                            })
+                        
+                        # Reconstruct the message with only the content before the signal
+                        response_json["choices"][0]["message"] = {
+                            "role": "assistant",
+                            "content": content_before_signal if content_before_signal else None,
+                            "tool_calls": tool_calls,
+                        }
+                        response_json["choices"][0]["finish_reason"] = "tool_calls"
+                        logger.debug(f"🔧 Function call conversion completed. Content before signal retained.")
+                    else:
+                        logger.debug(f"🔧 Trigger signal found but failed to parse tool calls. Returning original content.")
                 else:
-                    logger.debug(f"🔧 No tool calls detected, returning original content (including think blocks)")
+                    logger.debug(f"🔧 No trigger signal detected in non-streaming response. Returning original content.")
             else:
-                logger.debug(f"🔧 No function calls detected or conversion conditions not met")
+                logger.debug(f"🔧 Function calling is disabled. No conversion attempted.")
             
             return JSONResponse(content=response_json)
 
