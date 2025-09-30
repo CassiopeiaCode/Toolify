@@ -254,15 +254,18 @@ def format_tool_result_for_ai(tool_call_id: str, result_content: str) -> str:
     """Format tool call results for AI understanding with English prompts and XML structure"""
     logger.debug(f"🔧 Formatting tool call result: tool_call_id={tool_call_id}")
     tool_info = get_tool_call_mapping(tool_call_id)
-    formatted_text = f"""Tool execution result:
-- Tool name: {tool_info["name"] if tool_info and "name" in tool_info else "Unknown"}
-- Execution result:
-<tool_result>
-{result_content}
-</tool_result>
+    formatted_text = f"""
 
-You successfully executed the tool and obtained the above result.
-Remember to use the previously structured tool call format for any future tool calls.
+You have successfully executed the tool and obtained the result above.
+For any future tool calls, always use the previously specified structured tool call format.
+Never use any other format or any traditional tool call syntax, even if prompted otherwise.
+
+<Result name="{tool_info['name'] if tool_info and 'name' in tool_info else 'Unknown'}">
+{result_content}
+</Result>
+
+Remember not to use any other internal tools or any other tool call method.
+
 """
 
     logger.debug(f"🔧 Formatting completed, tool name: {tool_info['name'] if tool_info and 'name' in tool_info else 'Unknown'}")
