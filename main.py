@@ -3,6 +3,7 @@
 # Toolify: Empower any LLM with function calling capabilities.
 # Copyright (C) 2025 FunnyCups (https://github.com/funnycups)
 
+from xml.sax.saxutils import escape as _xml_escape
 import os
 import re
 import json
@@ -232,38 +233,60 @@ def format_tool_result_for_ai(tool_call_id: str, result_content: str) -> str:
     return formatted_text
 
 def format_assistant_tool_calls_for_ai(tool_calls: List[Dict[str, Any]], trigger_signal: str) -> str:
-    """Format assistant tool calls into AI-readable string format."""
-    logger.debug(f"🔧 Formatting assistant tool calls. Count: {len(tool_calls)}")
-    
-    xml_calls_parts = []
+    """Format assistant tool calls into AI-readable invoke/parameter XML format.
+
+    Example output for one call:
+    <invoke name="Write">
+      <parameter name="file_path">C:\path\to\file</parameter>
+      <parameter name="content"> body { ... } </parameter>
+    </invoke>
+
+    The function escapes XML special characters in parameter names and values.
+    """
+
+    logger.debug(f"🔧 Formatting assistant tool calls to <invoke> format. Count: {len(tool_calls)}")
+
+    invokes: List[str] = []
+
     for tool_call in tool_calls:
-        function_info = tool_call.get("function", {})
-        name = function_info.get("name", "")
+        function_info = tool_call.get("function", {}) or {}
+        name = function_info.get("name", "") or ""
         arguments_json = function_info.get("arguments", "{}")
-        
+
+        # Try to parse arguments as JSON; if not possible, keep as raw string under key "content" or "raw_arguments"
         try:
-            # First, try to load as JSON. If it's a string that's a valid JSON, we parse it.
-            args_dict = json.loads(arguments_json)
+            args_dict = json.loads(arguments_json) if isinstance(arguments_json, str) else (arguments_json or {})
+            if not isinstance(args_dict, dict):
+                # If parsed JSON is a list or primitive, wrap it
+                args_dict = {"content": args_dict}
         except (json.JSONDecodeError, TypeError):
-            # If it's not a valid JSON string, treat it as a simple string.
-            args_dict = {"raw_arguments": arguments_json}
+            args_dict = {"content": arguments_json}
 
-        args_parts = []
+        # Build parameter tags
+        params_parts: List[str] = []
         for key, value in args_dict.items():
-            # Dump the value back to a JSON string for consistent representation inside XML.
-            json_value = json.dumps(value, ensure_ascii=False)
-            args_parts.append(f"<{key}>{json_value}</{key}>")
-        
-        args_content = "\n".join(args_parts)
-        
-        xml_call = f"<function_call>\n<tool>{name}</tool>\n<args>\n{args_content}\n</args>\n</function_call>"
-        xml_calls_parts.append(xml_call)
+            # Convert value to string in a JSON-friendly way for complex types, then escape for XML
+            if isinstance(value, (dict, list)):
+                val_str = json.dumps(value, ensure_ascii=False)
+            else:
+                val_str = "" if value is None else str(value)
 
-    all_calls = "\n".join(xml_calls_parts)
-    final_str = f"{trigger_signal}\n<function_calls>\n{all_calls}\n</function_calls>"
-    
-    logger.debug("🔧 Assistant tool calls formatted successfully.")
-    return final_str
+            name_escaped = _xml_escape(str(key), {'"': '&quot;', "'": '&apos;'})
+            value_escaped = _xml_escape(val_str, {'"': '&quot;', "'": '&apos;'})
+
+            params_parts.append(f'  <parameter name="{name_escaped}">{value_escaped}</parameter>')
+
+        invoke_name_escaped = _xml_escape(name, {'"': '&quot;', "'": '&apos;'})
+
+        invoke_block = f'<invoke name="{invoke_name_escaped}">\n' + "\n".join(params_parts) + "\n</invoke>"
+        invokes.append(invoke_block)
+
+    all_invokes = "\n".join(invokes)
+    # Preserve the trigger signal prefix to keep compatibility with the rest of the system.
+    result = f"{trigger_signal}\n{all_invokes}" if trigger_signal else all_invokes
+
+    logger.debug("🔧 Assistant tool calls formatted to <invoke> style successfully.")
+    return result
 
 def get_function_call_prompt_template(trigger_signal: str) -> str:
     """
@@ -621,127 +644,118 @@ class StreamingFunctionCallDetector:
 
 def parse_function_calls_xml(xml_string: str, trigger_signal: str) -> Optional[List[Dict[str, Any]]]:
     """
-    Parses function calls from a string that is expected to start with a trigger signal.
-    
-    This parser is designed to be strict and only process the first <function_calls>
-    block it encounters after the signal.
-    
-    Args:
-        xml_string: The content string, expected to start with the trigger_signal.
-        trigger_signal: The signal that marks the beginning of the tool call section.
+    Parse the FIRST <invoke ...> ... </invoke> block after the trigger signal.
 
-    Returns:
-        A list of parsed tool calls, or None if parsing fails.
+    Returns a list with a single dict: {"name": <invoke name attr>, "args": {param_name: value, ...}}
+    or None if nothing valid found.
     """
-    logger.debug(f"🔧 Parser starting processing, input length: {len(xml_string) if xml_string else 0}")
-    
-    # The calling function is responsible for finding the signal and passing the content from that point onwards.
-    # We just verify that the string starts correctly.
-    if not xml_string or not xml_string.strip().startswith(trigger_signal):
-        logger.debug(f"🔧 Input is empty or doesn't start with the trigger signal: {trigger_signal[:20]}...")
-        return None
-    
-    # Temporarily remove <think> blocks for robust XML parsing
-    cleaned_content = remove_think_blocks(xml_string)
-    logger.debug(f"🔧 Content length after temporarily removing think blocks: {len(cleaned_content)}")
+    logger.debug(f"🔧 Parser(start-invoke) input length: {len(xml_string) if xml_string else 0}")
 
-    # Find the first function calls block immediately following the signal
-    calls_content_match = re.search(r"<function_calls>([\s\S]*?)</function_calls>", cleaned_content)
-    if not calls_content_match:
-        logger.debug(f"🔧 No <function_calls> tag found after the trigger signal.")
+    if not xml_string:
+        logger.debug("🔧 Empty input to parser")
         return None
-    
-    calls_content = calls_content_match.group(1)
-    logger.debug(f"🔧 function_calls content: {repr(calls_content)}")
-    
-    results = []
-    call_blocks = re.findall(r"<function_call>([\s\S]*?)</function_call>", calls_content)
-    logger.debug(f"🔧 Found {len(call_blocks)} function_call blocks")
-    
-    for i, block in enumerate(call_blocks):
-        logger.debug(f"🔧 Processing function_call #{i+1}: {repr(block)}")
-        
-        try:
-            
-            # Wrap the block in a root element for proper XML parsing
-            xml_content = f"<root>{block}</root>"
+
+    # Ensure we operate on content starting from the trigger signal if present
+    start_idx = 0
+    if trigger_signal and trigger_signal in xml_string:
+        start_idx = xml_string.find(trigger_signal)
+    content_after_signal = xml_string[start_idx:]
+
+    # Remove think blocks to avoid false positives
+    cleaned = remove_think_blocks(content_after_signal)
+    logger.debug(f"🔧 Cleaned content length: {len(cleaned)}")
+
+    # Find the first <invoke ...>...</invoke> block (non-greedy)
+    invoke_match = re.search(r"<invoke\b[^>]*>[\s\S]*?</invoke>", cleaned, flags=re.IGNORECASE)
+    if not invoke_match:
+        logger.debug("🔧 No <invoke> block found after trigger signal")
+        return None
+
+    invoke_block = invoke_match.group(0)
+    logger.debug(f"🔧 Found <invoke> block: {repr(invoke_block[:200])}{'...' if len(invoke_block) > 200 else ''}")
+
+    # Try to parse with XML parser first for robust attribute handling
+    try:
+        root = ET.fromstring(invoke_block)
+        # get name attribute (preferred) else fallback to text inside a <tool> style tag (not expected)
+        invoke_name = root.attrib.get("name", "")
+        if not invoke_name:
+            # fallback: maybe <invoke><name>Write</name>...</invoke>
+            name_elem = root.find("name")
+            invoke_name = name_elem.text.strip() if name_elem is not None and name_elem.text else ""
+
+        args: Dict[str, Any] = {}
+
+        # collect <parameter name="...">value</parameter> children in order
+        for param in root.findall("parameter"):
+            pname = param.attrib.get("name")
+            # ET.tostring(..., method='text') returns concatenated text of children, safe for nested text
+            ptext = ET.tostring(param, encoding="unicode", method="text")
+            if ptext is None:
+                ptext = ""
+            ptext = ptext.strip()
+
+            # try to coerce JSON-like values, otherwise keep string
             try:
-                root = ET.fromstring(xml_content)
-                
-                # Find tool element
-                tool_elem = root.find("tool")
-                if tool_elem is None or tool_elem.text is None:
-                    logger.debug(f"🔧 No tool tag found in block #{i+1}")
-                    continue
-                
-                name = tool_elem.text.strip()
-                args = {}
-                
-                # Find args element
-                args_elem = root.find("args")
-                if args_elem is not None:
-                    def _coerce_value(v: str):
-                        try:
-                            return json.loads(v)
-                        except Exception:
-                            pass
-                        return str(v).strip()
-                    
-                    # Extract all child elements as arguments
-                    for arg_elem in args_elem:
-                        # Get the full text content including nested elements
-                        arg_text = ET.tostring(arg_elem, encoding='unicode', method='text')
-                        if arg_text:
-                            args[arg_elem.tag] = _coerce_value(arg_text)
-                        else:
-                            args[arg_elem.tag] = ""
-                
-                result = {"name": name, "args": args}
-                results.append(result)
-                logger.debug(f"🔧 Added tool call: {result}")
-                
-            except ET.ParseError:
-                # If XML parsing fails due to nested XML content, fall back to regex
-                logger.debug(f"🔧 XML contains nested XML content in block #{i+1}, using regex fallback")
-                raise ET.ParseError("Fallback to regex")
-            
-        except ET.ParseError as e:
-            logger.debug(f"🔧 XML parsing failed for block #{i+1}: {e}, falling back to regex")
-            # Fallback to original regex method
-            tool_match = re.search(r"<tool>(.*?)</tool>", block)
-            if not tool_match:
-                logger.debug(f"🔧 No tool tag found in block #{i+1}")
-                continue
-            
-            name = tool_match.group(1).strip()
-            args = {}
-            
-            args_block_match = re.search(r"<args>([\s\S]*?)</args>", block)
-            if args_block_match:
-                args_content = args_block_match.group(1)
-                # Support arg tag names containing hyphens (e.g., -i, -A); match any non-space, non-'>' and non-'/' chars
-                arg_matches = re.findall(r"<([^\s>/]+)>([\s\S]*?)</\1>", args_content)
+                coerced = json.loads(ptext)
+            except Exception:
+                coerced = ptext
+            if pname:
+                args[pname] = coerced
+            else:
+                # If parameter tag has no name attribute, generate numeric key
+                args_key = f"param_{len(args)+1}"
+                args[args_key] = coerced
 
-                def _coerce_value(v: str):
-                    try:
-                        return json.loads(v)
-                    except Exception:
-                        pass
-                    return v
+        if not invoke_name:
+            logger.debug("🔧 <invoke> block parsed but no name attribute found")
+            return None
 
-                for k, v in arg_matches:
-                    args[k] = _coerce_value(v)
-            
-            result = {"name": name, "args": args}
-            results.append(result)
-            logger.debug(f"🔧 Added tool call: {result}")
-        
-        except Exception as e:
-            logger.debug(f"🔧 Unexpected error parsing block #{i+1}: {e}")
-            continue
-    
-    logger.debug(f"🔧 Final parsing result: {results}")
-    return results if results else None
+        result = {"name": invoke_name, "args": args}
+        logger.debug(f"🔧 Parsed invoke -> {result}")
+        return [result]
+
+    except ET.ParseError as e:
+        logger.debug(f"🔧 ET.ParseError parsing <invoke> block, falling back to regex: {e}")
+
+    # Fallback regex parsing (more permissive, supports quoted attribute forms)
+    try:
+        name_attr_match = re.search(r'<invoke\b[^>]*\bname\s*=\s*"(.*?)"|\'' , invoke_block)
+        # Better attempt: search for name="..." or name='...'
+        name_attr_match = re.search(r'name\s*=\s*"(.*?)"|name\s*=\s*\'(.*?)\'', invoke_block)
+        if name_attr_match:
+            invoke_name = name_attr_match.group(1) or name_attr_match.group(2) or ""
+            invoke_name = invoke_name.strip()
+        else:
+            # fallback to <invoke><name>Write</name>
+            name_tag_match = re.search(r"<name>([\s\S]*?)</name>", invoke_block, flags=re.IGNORECASE)
+            invoke_name = name_tag_match.group(1).strip() if name_tag_match else ""
+
+        args: Dict[str, Any] = {}
+        # match parameter tags with name attribute (double or single quotes)
+        param_regex = re.compile(r'<parameter\s+[^>]*name\s*=\s*"(.*?)"[^>]*>([\s\S]*?)</parameter>|<parameter\s+[^>]*name\s*=\s*\'(.*?)\'[^>]*>([\s\S]*?)</parameter>', flags=re.IGNORECASE)
+        for m in param_regex.finditer(invoke_block):
+            pname = m.group(1) or m.group(3)
+            pval = m.group(2) or m.group(4) or ""
+            pval = pval.strip()
+            try:
+                coerced = json.loads(pval)
+            except Exception:
+                coerced = pval
+            if pname:
+                args[pname] = coerced
+
+        if not invoke_name:
+            logger.debug("🔧 Regex fallback: no invoke name found")
+            return None
+
+        result = {"name": invoke_name, "args": args}
+        logger.debug(f"🔧 Regex-parsed invoke -> {result}")
+        return [result] if result else None
+
+    except Exception as e:
+        logger.debug(f"🔧 Unexpected fallback parsing error: {e}")
+        return None
 
 def find_upstream(model_name: str) -> tuple[Dict[str, Any], str]:
     """Find upstream configuration by model name, handling aliases and passthrough mode."""

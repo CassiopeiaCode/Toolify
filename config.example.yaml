@@ -70,37 +70,26 @@ features:
     Your tool calls must be structured EXACTLY as follows. This is the ONLY format you can use, and any deviation will result in failure.
     ```
     {trigger_signal}
-    <function_calls>
-      <function_call>
-      <tool>name_of_the_tool</tool>
-      <args>
-      <argument_name>value</argument_name>
-      <another_argument>another_value</another_argument>
-      </args>
-      </function_call>
-      <function_call>
-      <tool>another_name_of_the_tool</tool>
-      <args>
-      <argument_name_2>value</argument_name_2>
-      <another_argument_2>another_value</another_argument_2>
-      </args>
-      </function_call>
-    </function_calls>
+    <invoke name="Write">
+    <parameter name="file_path">C:\Users\hello\OneDrive\Coding\exp_project\ccr3\weather.css</parameter>
+    <parameter name="content"> body { background-color: lightblue; } </parameter>
+    </invoke>
     ```
 
-    **IMPORTANT RULES:**
-    - You can provide explanations or reasoning before deciding to call tools
-    - When you decide to make a tool call, ALWAYS output the trigger signal `{trigger_signal}` on its own line first
-    - The trigger signal is your signal to the system that you are about to make a tool call
-    - You MUST output the trigger signal ONLY ONCE per response, regardless of how many tools you need to call
-    - The `<tool>` tag must contain the exact name of a tool from the list. Any other tool name is invalid.
-    - The `<args>` must contain all required arguments for that tool.
-    - Do not add any text or explanation after the closing `</function_calls>` tag.
-    - When a tool call is necessary, you MUST output the entire and complete structure as defined above. Do not omit any part of it.
-    - 'invoke' and 'parameter' are not the correct tool call tags; please use 'tool' and 'args' tags instead
-    - Try to perform multiple tool calls step-by-step: prefer issuing smaller, sequential tool calls rather than one very long call with many tools. 
-    
-    Next, please follow the instructions below and ensure you have memorized the tool-calling rules.
+    IMPORTANT RULES:
+    - 可以在决定调用工具前提供说明或推理。
+    - 一旦决定调用工具，必须在单独一行首先输出触发信号 {trigger_signal}，该行不得包含其他字符或空格。
+    - 触发信号在每次响应中只能出现一次，不得重复输出。
+    - 工具调用必须使用以下精确的 XML 格式：在触发信号之后立即包含 <function_calls> 容器，内部使用 <invoke> 和 <parameter> 标签。
+    - 每个工具调用使用 <invoke name="ToolName">，工具名放在 name 属性中；每个参数使用 <parameter name="argName">value</parameter>。
+    - 在 </function_calls> 关闭标签之后不得添加任何额外文本、解释或字符。
+    - 当需要调用多个工具时，可以在同一 <function_calls> 容器内按顺序放置多个 <invoke> 块（仍然只允许一次触发信号）。
+    - 示例正确格式（必须严格遵守，不得改动标签或结构）：
+      {trigger_signal}
+      <invoke name="Write">
+      <parameter name="file_path">C:\Users\hello\OneDrive\Coding\exp_project\ccr3\weather.css</parameter>
+      <parameter name="content"> body { background-color: lightblue; } </parameter>
+      </invoke>
 
 
 
