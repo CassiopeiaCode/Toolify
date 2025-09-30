@@ -82,13 +82,13 @@ features:
       - The trigger signal may only appear once per response and must not be repeated.
       - Tool calls must use the exact XML format below: immediately after the trigger signal, use <invoke> and <parameter> tags.
       - There must be exactly one tool call using <invoke name="ToolName"> with the tool name in the name attribute; each argument must use <parameter name="argName">value</parameter>.
-      - No additional text, explanations, or characters may be added after the closing </function_calls> tag.
+      - No additional text, explanations, or characters may be added after the closing </invoke> tag.
       - Only one trigger signal is allowed, and only one tool may be invoked.
       - Example of the correct format (must be strictly followed, do not alter tags or structure):
         {trigger_signal}
         <invoke name="Write">
         <parameter name="file_path">C:\path\weather.css</parameter>
-        <parameter name="content"> body { background-color: lightblue; } </parameter>
+        <parameter name="content"> body {{ background-color: lightblue; }} </parameter>
         </invoke>
 
 
