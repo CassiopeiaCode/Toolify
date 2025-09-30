@@ -299,7 +299,9 @@ def get_function_call_prompt_template(trigger_signal: str) -> str:
             trigger_signal=trigger_signal,
             tools_list="{tools_list}"
         )
-    
+
+    raise ValueError("No valid prompt template found.")
+
     return f"""
 You have access to the following available tools to help solve problems:
 

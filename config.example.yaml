@@ -71,25 +71,25 @@ features:
     ```
     {trigger_signal}
     <invoke name="Write">
-    <parameter name="file_path">C:\Users\hello\OneDrive\Coding\exp_project\ccr3\weather.css</parameter>
-    <parameter name="content"> body { background-color: lightblue; } </parameter>
+    <parameter name="file_path">C:\path\weather.css</parameter>
+    <parameter name="content"> body {{ background-color: lightblue; }} </parameter>
     </invoke>
     ```
 
     IMPORTANT RULES:
-    - 可以在决定调用工具前提供说明或推理。
-    - 一旦决定调用工具，必须在单独一行首先输出触发信号 {trigger_signal}，该行不得包含其他字符或空格。
-    - 触发信号在每次响应中只能出现一次，不得重复输出。
-    - 工具调用必须使用以下精确的 XML 格式：在触发信号之后立即包含 <function_calls> 容器，内部使用 <invoke> 和 <parameter> 标签。
-    - 每个工具调用使用 <invoke name="ToolName">，工具名放在 name 属性中；每个参数使用 <parameter name="argName">value</parameter>。
-    - 在 </function_calls> 关闭标签之后不得添加任何额外文本、解释或字符。
-    - 当需要调用多个工具时，可以在同一 <function_calls> 容器内按顺序放置多个 <invoke> 块（仍然只允许一次触发信号）。
-    - 示例正确格式（必须严格遵守，不得改动标签或结构）：
-      {trigger_signal}
-      <invoke name="Write">
-      <parameter name="file_path">C:\Users\hello\OneDrive\Coding\exp_project\ccr3\weather.css</parameter>
-      <parameter name="content"> body { background-color: lightblue; } </parameter>
-      </invoke>
+      - You may provide explanations or reasoning before deciding to call a tool.
+      - Once you decide to call a tool, you must first output the trigger signal {trigger_signal} on a separate line by itself; that line must not contain any other characters or spaces.
+      - The trigger signal may only appear once per response and must not be repeated.
+      - Tool calls must use the exact XML format below: immediately after the trigger signal, use <invoke> and <parameter> tags.
+      - There must be exactly one tool call using <invoke name="ToolName"> with the tool name in the name attribute; each argument must use <parameter name="argName">value</parameter>.
+      - No additional text, explanations, or characters may be added after the closing </function_calls> tag.
+      - Only one trigger signal is allowed, and only one tool may be invoked.
+      - Example of the correct format (must be strictly followed, do not alter tags or structure):
+        {trigger_signal}
+        <invoke name="Write">
+        <parameter name="file_path">C:\path\weather.css</parameter>
+        <parameter name="content"> body { background-color: lightblue; } </parameter>
+        </invoke>
 
 
 
