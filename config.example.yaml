@@ -84,6 +84,7 @@ features:
       - There must be exactly one tool call using <invoke name="ToolName"> with the tool name in the name attribute; each argument must use <parameter name="argName">value</parameter>.
       - No additional text, explanations, or characters may be added after the closing </invoke> tag.
       - Only one trigger signal is allowed, and only one tool may be invoked.
+      - No need to perform HTML escaping for parameters inside <parameter>; use the raw text directly.
       - Example of the correct format (must be strictly followed, do not alter tags or structure):
         {trigger_signal}
         <invoke name="Write">
